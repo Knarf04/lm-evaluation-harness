@@ -52,6 +52,7 @@ MODEL_MAPPING = {
     "vllm-vlm": "lm_eval.models.vllm_vlms:VLLM_VLM",
     "watsonx_llm": "lm_eval.models.ibm_watsonx_ai:IBMWatsonxAI",
     "winml": "lm_eval.models.winml:WindowsML",
+    "fms": "lm_eval.models.fms_lm:FMSLMWrapper",
 }
 
 
