@@ -140,12 +140,16 @@ class MambaLMWrapper(HFLM):
         self,
         pretrained: str,
         dtype: str | torch.dtype | None = "float16",
-        # no `parallelize=True` options
+        parallelize: bool | None = False,
         # no PEFT and quantization options
         # Mamba does not support arbitrary HF from_pretrained() args
         **kwargs,
     ) -> None:
         if self.variant is not None:
+            assert not parallelize, (
+                "MambaLMWrapper does not support model parallelism (parallelize=True) "
+                "for FMS checkpoints. Use data parallelism via `accelerate launch` instead."
+            )
             # Use pre-loaded FMS checkpoint
             _dtype = (
                 lm_eval.models.utils_hf.get_dtype(dtype)
@@ -158,8 +162,12 @@ class MambaLMWrapper(HFLM):
             self._model = self._fms_mamba_model_cpu
             del self._fms_mamba_model_cpu
         elif self.is_hf:
-            super()._create_model(pretrained, dtype=dtype, **kwargs)
+            super()._create_model(pretrained, dtype=dtype, parallelize=parallelize, **kwargs)
         else:
+            assert not parallelize, (
+                "MambaLMWrapper does not support model parallelism (parallelize=True). "
+                "Use data parallelism via `accelerate launch` instead."
+            )
             try:
                 from mamba_ssm.models.mixer_seq_simple import (
                     MambaLMHeadModel,  # noqa: F811

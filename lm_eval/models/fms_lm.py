@@ -112,8 +112,13 @@ class FMSLMWrapper(HFLM):
         self,
         pretrained: str,
         dtype: str | torch.dtype | None = "auto",
+        parallelize: bool | None = False,
         **kwargs,
     ) -> None:
+        assert not parallelize, (
+            "FMSLMWrapper does not support model parallelism (parallelize=True). "
+            "Use data parallelism via `accelerate launch` instead."
+        )
         from fms.models.hf.llama.modeling_llama_hf import (
             HFAdaptedLLaMAForCausalLM,
             HFAdaptedLLaMAConfig,
