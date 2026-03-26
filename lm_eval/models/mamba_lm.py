@@ -1,9 +1,16 @@
+import os
+
 import torch
 
 import lm_eval.models.utils
 import lm_eval.models.utils_hf
 from lm_eval.api.registry import register_model
 from lm_eval.models.huggingface import HFLM
+
+
+def _strip_compiled_prefix(sd):
+    prefix = "_orig_mod."
+    return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in sd.items()}
 
 
 @register_model("mamba_ssm")
@@ -13,6 +20,9 @@ class MambaLMWrapper(HFLM):
         pretrained="state-spaces/mamba-130m",
         # To use the HF compatible variant
         is_hf: bool = False,
+        # FMS checkpoint loading: pass variant (e.g. "mamba_1b") to load
+        # from an FMS/FSDP checkpoint instead of HF pretrained weights
+        variant: str = None,
         **kwargs,
     ) -> None:
         """
@@ -48,12 +58,25 @@ class MambaLMWrapper(HFLM):
 
         Are all supported by Mamba where they do not conflict
         with Mamba-specific restrictions such as causal LMs only.
+
+        For FMS checkpoint loading, pass ``variant`` (e.g. ``"mamba_1b"``).
+        ``pretrained`` should point to the checkpoint path (.pth file or
+        distributed checkpoint directory).  Supports both single-file
+        (``.pth``) and FSDP2 sharded checkpoints.
         """
 
         if "backend" in kwargs:
             # mamba currently only supports causal models
             assert kwargs["backend"] == "causal"
+
+        self.variant = variant
         self.is_hf = is_hf or pretrained.endswith("hf")
+
+        # Load FMS checkpoint on CPU BEFORE super().__init__() triggers
+        # Accelerator / torch.distributed init (same pattern as FMSLMWrapper).
+        if self.variant is not None:
+            self._fms_mamba_model_cpu = self._load_fms_checkpoint(pretrained, variant)
+
         super().__init__(
             pretrained=pretrained,
             # set appropriate defaults for tokenizer, max length, etc
@@ -63,12 +86,44 @@ class MambaLMWrapper(HFLM):
             **kwargs,
         )
 
+    @staticmethod
+    def _load_fms_checkpoint(pretrained: str, variant: str):
+        """Load Mamba model from an FMS/FSDP checkpoint on CPU."""
+        try:
+            from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
+            from mamba_ssm.models.config_mamba import MambaConfig
+            from fms_fsdp.utils.config_utils import get_model_config
+        except ModuleNotFoundError as exc:
+            raise type(exc)(
+                "attempted to use 'mamba_ssm' LM type with FMS checkpoint, but "
+                "packages `mamba_ssm` and `fms_fsdp` are not installed."
+            ) from exc
+        from torch.distributed._shard.checkpoint import FileSystemReader, load
+
+        config_data = get_model_config(variant)
+        config = MambaConfig(**config_data)
+        model = MambaLMHeadModel(config)
+
+        print(f"Reading state dict from {pretrained}")
+        if pretrained.endswith('.pth'):
+            ckpt = torch.load(pretrained, map_location="cpu")
+            model.load_state_dict(_strip_compiled_prefix(ckpt["model_state"]))
+        else:
+            state_dict = {"model_state": model.state_dict()}
+            load(state_dict=state_dict, storage_reader=FileSystemReader(pretrained))
+            model.load_state_dict(_strip_compiled_prefix(state_dict["model_state"]))
+
+        return model
+
     def _get_config(
         self,
         pretrained: str,
         **kwargs,
     ) -> None:
-        if self.is_hf:
+        if self.variant is not None:
+            # Config comes from get_model_config, not the HF hub
+            self._config = {}
+        elif self.is_hf:
             super()._get_config(pretrained, **kwargs)
         else:
             try:
@@ -90,7 +145,19 @@ class MambaLMWrapper(HFLM):
         # Mamba does not support arbitrary HF from_pretrained() args
         **kwargs,
     ) -> None:
-        if self.is_hf:
+        if self.variant is not None:
+            # Use pre-loaded FMS checkpoint
+            _dtype = (
+                lm_eval.models.utils_hf.get_dtype(dtype)
+                if dtype is not None and dtype != "auto"
+                else torch.bfloat16
+            )
+            self._fms_mamba_model_cpu.to(self._device, dtype=_dtype)
+            self._fms_mamba_model_cpu.eval()
+            torch.set_grad_enabled(False)
+            self._model = self._fms_mamba_model_cpu
+            del self._fms_mamba_model_cpu
+        elif self.is_hf:
             super()._create_model(pretrained, dtype=dtype, **kwargs)
         else:
             try:
