@@ -196,6 +196,12 @@ class MambaLMWrapper(HFLM):
         # )
 
         if not self.is_hf:
+            # temperature=0 with top_k>1 causes div-by-zero in mamba_ssm's
+            # generate; use top_k=1 for greedy decoding instead.
+            if generation_kwargs.get("temperature", 1.0) == 0.0:
+                generation_kwargs["temperature"] = 1.0
+                generation_kwargs["top_k"] = 1
+
             return self.model.generate(
                 input_ids=context,
                 max_length=max_length,
