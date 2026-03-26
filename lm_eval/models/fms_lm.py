@@ -9,6 +9,11 @@ from lm_eval.models.huggingface import HFLM
 eval_logger = logging.getLogger(__name__)
 
 
+def _strip_compiled_prefix(sd):
+    prefix = "_orig_mod."
+    return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in sd.items()}
+
+
 @register_model("fms")
 class FMSLMWrapper(HFLM):
     """
@@ -86,9 +91,13 @@ class FMSLMWrapper(HFLM):
         models.register_model(arch, var, _llama_factory_factory(config_data))
 
         fms_model = LLaMA(config_data)
-        state_dict = {"model_state": fms_model.state_dict()}
-        load(state_dict=state_dict, storage_reader=FileSystemReader(pretrained))
-        fms_model.load_state_dict(state_dict["model_state"])
+        if pretrained.endswith('.pth'):
+            ckpt = torch.load(pretrained, map_location="cpu")
+            fms_model.load_state_dict(_strip_compiled_prefix(ckpt["model_state"]))
+        else:
+            state_dict = {"model_state": fms_model.state_dict()}
+            load(state_dict=state_dict, storage_reader=FileSystemReader(pretrained))
+            fms_model.load_state_dict(_strip_compiled_prefix(state_dict["model_state"]))
 
         return fms_model
 
