@@ -4,6 +4,8 @@ task:
   - longbench_fewshot_e
   - longbench_multi_e
   - longbench_single_e
+  - longbench_summarization_e
+  - longbench_synthetic_e
 aggregate_metric_list:
   - metric: score
     weight_by_size: False
