@@ -17,17 +17,17 @@ def _strip_compiled_prefix(sd):
 @register_model("fms")
 class FMSLMWrapper(HFLM):
     """
-    lm-eval-harness model adapter for FMS LLaMA checkpoints via HF-adapted wrapper.
+    lm-eval-harness model adapter for FMS checkpoints via HF-adapted wrappers.
 
     Extends HFLM to leverage all its evaluation infrastructure (batching,
     caching, loglikelihood, generation) while loading models via FMS's
     sharded checkpoint system and HF-adapted wrappers.
 
-    Currently only supports LLaMA architectures.
+    Supported architectures: llama, gdn (Gated DeltaNet via fla).
 
     Expected model_args:
-      pretrained: str  (path to checkpoint directory readable by FileSystemReader)
-      variant: str     (e.g. "llama_7b" — must be "<arch>_<variant>")
+      pretrained: str  (path to checkpoint .pth file or distributed checkpoint dir)
+      variant: str     (e.g. "llama_7b" or "gdn_100m" — must be "<arch>_<variant>")
       tokenizer: str   (HF tokenizer name/path, e.g. "meta-llama/Llama-2-7b-hf")
       + all HFLM args (batch_size, max_length, dtype, device, trust_remote_code, etc.)
 
@@ -36,6 +36,8 @@ class FMSLMWrapper(HFLM):
         --model_args pretrained=/path/to/checkpoint,variant=llama_7b,tokenizer=meta-llama/Llama-2-7b-hf \\
         --tasks hellaswag \\
         --batch_size 8
+
+    Data parallelism via accelerate launch is supported. Model parallelism is not.
     """
 
     def __init__(
@@ -50,6 +52,7 @@ class FMSLMWrapper(HFLM):
                 f"variant must be '<arch>_<variant>' (e.g. 'llama_7b'), got '{variant}'"
             )
         self.variant = variant
+        self._arch = parts[0]
         if "backend" in kwargs and kwargs["backend"] != "causal":
             raise ValueError(
                 f"FMS only supports causal (decoder-only) models, got backend='{kwargs['backend']}'"
@@ -69,37 +72,56 @@ class FMSLMWrapper(HFLM):
 
     @staticmethod
     def _load_fms_checkpoint(pretrained: str, variant: str):
-        """Load FMS model + sharded checkpoint on CPU, before distributed init."""
+        """Load FMS model + checkpoint on CPU, before distributed init.
+
+        Supports llama (via FMS) and gdn (via fla) architectures.
+        """
         try:
-            from fms import models
-            from fms.models.llama import LLaMA, _llama_factory_factory
             from fms_fsdp.utils.config_utils import get_model_config
         except ModuleNotFoundError as exc:
             raise type(exc)(
-                "attempted to use 'fms' LM type, but packages `fms` and "
-                "`fms_fsdp` are not installed."
+                "attempted to use 'fms' LM type, but package `fms_fsdp` is not installed."
             ) from exc
         from torch.distributed._shard.checkpoint import FileSystemReader, load
 
         arch, var = variant.split("_", 1)
-        if arch != "llama":
-            raise NotImplementedError(
-                f"Only llama architecture is supported (got arch={arch})"
+        config_data = get_model_config(variant)
+
+        if arch == "llama":
+            from fms import models
+            from fms.models.llama import LLaMA, _llama_factory_factory
+
+            models.register_model(arch, var, _llama_factory_factory(config_data))
+            model = LLaMA(config_data)
+
+        elif arch == "gdn":
+            from fla.models.gated_deltanet import (
+                GatedDeltaNetForCausalLM,
+                GatedDeltaNetConfig as FLAGDNConfig,
             )
 
-        config_data = get_model_config(variant)
-        models.register_model(arch, var, _llama_factory_factory(config_data))
+            # fla uses vocab_size; fms config_utils returns src_vocab_size
+            fla_config_data = dict(config_data)
+            if "src_vocab_size" in fla_config_data:
+                fla_config_data["vocab_size"] = fla_config_data.pop("src_vocab_size")
+            fla_config = FLAGDNConfig(**fla_config_data)
+            model = GatedDeltaNetForCausalLM(fla_config)
 
-        fms_model = LLaMA(config_data)
+        else:
+            raise NotImplementedError(
+                f"Unsupported architecture '{arch}'. Supported: llama, gdn."
+            )
+
+        eval_logger.info(f"Reading state dict from {pretrained}")
         if pretrained.endswith('.pth'):
             ckpt = torch.load(pretrained, map_location="cpu")
-            fms_model.load_state_dict(_strip_compiled_prefix(ckpt["model_state"]))
+            model.load_state_dict(_strip_compiled_prefix(ckpt["model_state"]))
         else:
-            state_dict = {"model_state": fms_model.state_dict()}
+            state_dict = {"model_state": model.state_dict()}
             load(state_dict=state_dict, storage_reader=FileSystemReader(pretrained))
-            fms_model.load_state_dict(_strip_compiled_prefix(state_dict["model_state"]))
+            model.load_state_dict(_strip_compiled_prefix(state_dict["model_state"]))
 
-        return fms_model
+        return model
 
     def _get_config(
         self,
@@ -119,12 +141,8 @@ class FMSLMWrapper(HFLM):
             "FMSLMWrapper does not support model parallelism (parallelize=True). "
             "Use data parallelism via `accelerate launch` instead."
         )
-        from fms.models.hf.llama.modeling_llama_hf import (
-            HFAdaptedLLaMAForCausalLM,
-            HFAdaptedLLaMAConfig,
-        )
 
-        fms_model = self._fms_model_cpu
+        model = self._fms_model_cpu
 
         # Resolve dtype — default to bfloat16 for FMS models
         _dtype = (
@@ -132,23 +150,41 @@ class FMSLMWrapper(HFLM):
             if dtype is not None and dtype != "auto"
             else torch.bfloat16
         )
-        fms_model.to(self._device, dtype=_dtype)
+        model.to(self._device, dtype=_dtype)
 
         torch.set_grad_enabled(False)
-        fms_model.eval()
+        model.eval()
 
         # Convert to HF-adapted causal LM.
         # Must disable weight init: from_fms_model triggers PreTrainedModel.__init__
         # -> post_init() -> init_weights() which re-initializes all submodule weights.
         from transformers.modeling_utils import no_init_weights
 
-        fms_hf_config = HFAdaptedLLaMAConfig.from_fms_config(fms_model.get_config())
-        with no_init_weights():
-            self._model = HFAdaptedLLaMAForCausalLM.from_fms_model(
-                fms_model, **fms_hf_config.to_dict()
+        if self._arch == "llama":
+            from fms.models.hf.llama.modeling_llama_hf import (
+                HFAdaptedLLaMAForCausalLM,
+                HFAdaptedLLaMAConfig,
             )
-        self._model.eval()
+            fms_hf_config = HFAdaptedLLaMAConfig.from_fms_config(model.get_config())
+            with no_init_weights():
+                self._model = HFAdaptedLLaMAForCausalLM.from_fms_model(
+                    model, **fms_hf_config.to_dict()
+                )
 
+        elif self._arch == "gdn":
+            from fms.models.hf.gated_delta_net.modeling_gated_delta_net_hf import (
+                HFAdaptedGDNForCausalLM,
+            )
+            from fms.models.hf.gated_delta_net.configuration_gated_delta_net_hf import (
+                HFAdaptedGDNConfig,
+            )
+            fms_hf_config = HFAdaptedGDNConfig.from_dict(model.config.to_dict())
+            with no_init_weights():
+                self._model = HFAdaptedGDNForCausalLM._hf_model_from_fms(
+                    model, fms_hf_config
+                )
+
+        self._model.eval()
         self._config = self._model.config
 
         # Clean up reference
