@@ -1,0 +1,11 @@
+group: longbench_fewshot_e_8k_plus
+group_alias: "Few-shot Learning (LongBench-E 8k+)"
+task:
+  - longbench_trec_e_8k_plus
+  - longbench_triviaqa_e_8k_plus
+  - longbench_samsum_e_8k_plus
+aggregate_metric_list:
+  - metric: score
+    weight_by_size: False
+metadata:
+  version: 0.0

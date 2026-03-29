@@ -1,0 +1,13 @@
+group: longbench_e_4_8k
+task:
+  - longbench_single_e_4_8k
+  - longbench_multi_e_4_8k
+  - longbench_summarization_e_4_8k
+  - longbench_fewshot_e_4_8k
+  - longbench_code_e_4_8k
+  - longbench_synthetic_e_4_8k
+aggregate_metric_list:
+  - metric: score
+    weight_by_size: False
+metadata:
+  version: 0.0

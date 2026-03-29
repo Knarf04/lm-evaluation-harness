@@ -1,0 +1,6 @@
+include: gov_report_e.yaml
+task: longbench_gov_report_e_4_8k
+process_docs: !function metrics.filter_4_8k
+tag:
+  - longbench_summarization_tasks_e_4_8k
+  - longbench_tasks_e_4_8k

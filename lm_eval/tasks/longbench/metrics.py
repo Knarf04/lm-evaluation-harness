@@ -333,3 +333,17 @@ def get_code_sim_with_score(doc: dict, results: list[str], **kwargs):
     result = get_code_sim_score(doc, results, **kwargs)
     code_sim = result["code_sim_score"]
     return {"score": code_sim, "code_sim_score": code_sim}
+
+
+# Context-length bucket filters for LongBench-E
+# Thresholds match the original scorer_e() in utils.py (4000 and 8000)
+from functools import partial
+
+
+def _filter_by_length_bucket(dataset, min_len, max_len):
+    return dataset.filter(lambda x: min_len <= x["length"] < max_len)
+
+
+filter_0_4k = partial(_filter_by_length_bucket, min_len=0, max_len=4000)
+filter_4_8k = partial(_filter_by_length_bucket, min_len=4000, max_len=8000)
+filter_8k_plus = partial(_filter_by_length_bucket, min_len=8000, max_len=float("inf"))

@@ -1,0 +1,10 @@
+group: longbench_single_e_0_4k
+group_alias: "Single-Document QA (LongBench-E 0-4k)"
+task:
+  - longbench_qasper_e_0_4k
+  - longbench_multifieldqa_en_e_0_4k
+aggregate_metric_list:
+  - metric: score
+    weight_by_size: False
+metadata:
+  version: 0.0

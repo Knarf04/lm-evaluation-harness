@@ -1,0 +1,6 @@
+include: 2wikimqa_e.yaml
+task: longbench_2wikimqa_e_0_4k
+process_docs: !function metrics.filter_0_4k
+tag:
+  - longbench_multi_tasks_e_0_4k
+  - longbench_tasks_e_0_4k

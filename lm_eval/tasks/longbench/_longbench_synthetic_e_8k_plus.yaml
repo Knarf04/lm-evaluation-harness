@@ -1,0 +1,10 @@
+group: longbench_synthetic_e_8k_plus
+group_alias: "Synthetic Tasks (LongBench-E 8k+)"
+task:
+  - longbench_passage_count_e_8k_plus
+  - longbench_passage_retrieval_en_e_8k_plus
+aggregate_metric_list:
+  - metric: score
+    weight_by_size: False
+metadata:
+  version: 0.0

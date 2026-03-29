@@ -1,0 +1,6 @@
+include: qasper_e.yaml
+task: longbench_qasper_e_0_4k
+process_docs: !function metrics.filter_0_4k
+tag:
+  - longbench_single_tasks_e_0_4k
+  - longbench_tasks_e_0_4k

@@ -1,0 +1,10 @@
+group: longbench_code_e_0_4k
+group_alias: "Code Completion (LongBench-E 0-4k)"
+task:
+  - longbench_lcc_e_0_4k
+  - longbench_repobench-p_e_0_4k
+aggregate_metric_list:
+  - metric: score
+    weight_by_size: False
+metadata:
+  version: 0.0

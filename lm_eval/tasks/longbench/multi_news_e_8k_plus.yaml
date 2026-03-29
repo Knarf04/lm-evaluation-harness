@@ -1,0 +1,6 @@
+include: multi_news_e.yaml
+task: longbench_multi_news_e_8k_plus
+process_docs: !function metrics.filter_8k_plus
+tag:
+  - longbench_summarization_tasks_e_8k_plus
+  - longbench_tasks_e_8k_plus
