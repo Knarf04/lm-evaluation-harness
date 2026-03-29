@@ -11,19 +11,47 @@ eval_logger = logging.getLogger(__name__)
 
 def _patch_triton_autotuner_compat():
     """Triton 3.1.0 excludes tl.constexpr params from fn.arg_names, but fla
-    kernels use them as autotuner keys (e.g. STAGE). Filter keys to avoid
-    ValueError on import."""
+    kernels use them as autotuner keys (e.g. STAGE, H, K, V, BT).
+
+    Two patches:
+      __init__: filter key list to only params in arg_names (fixes import crash)
+      run:      catch IndexError from stale key_idx and fall back to first config
+                (fixes runtime crash from arg-index mismatch)
+    """
     try:
         from triton.runtime.autotuner import Autotuner
     except ImportError:
         return
     if getattr(Autotuner, '_fms_patched', False):
         return
+
     _orig_init = Autotuner.__init__
+    _orig_run = Autotuner.run
+
     def _patched_init(self, fn, arg_names, configs, key, *args, **kwargs):
         key = [k for k in key if k in arg_names]
         return _orig_init(self, fn, arg_names, configs, key, *args, **kwargs)
+
+    def _patched_run(self, *args, **kwargs):
+        try:
+            return _orig_run(self, *args, **kwargs)
+        except IndexError:
+            # key_idx out of range — constexpr/arg_names mismatch at runtime.
+            # Fall back to first config (correct but may skip autotuning).
+            config = self.configs[0]
+            self.best_config = config
+            if config.pre_hook is not None:
+                config.pre_hook({
+                    **dict(zip(self.arg_names, args)),
+                    **kwargs,
+                    **config.all_kwargs(),
+                })
+            ret = self.fn.run(*args, **kwargs, **config.all_kwargs())
+            self.nargs = None
+            return ret
+
     Autotuner.__init__ = _patched_init
+    Autotuner.run = _patched_run
     Autotuner._fms_patched = True
 
 
