@@ -9,6 +9,24 @@ from lm_eval.models.huggingface import HFLM
 eval_logger = logging.getLogger(__name__)
 
 
+def _patch_triton_autotuner_compat():
+    """Triton 3.1.0 excludes tl.constexpr params from fn.arg_names, but fla
+    kernels use them as autotuner keys (e.g. STAGE). Filter keys to avoid
+    ValueError on import."""
+    try:
+        from triton.runtime.autotuner import Autotuner
+    except ImportError:
+        return
+    if getattr(Autotuner, '_fms_patched', False):
+        return
+    _orig_init = Autotuner.__init__
+    def _patched_init(self, fn, arg_names, configs, key, *args, **kwargs):
+        key = [k for k in key if k in arg_names]
+        return _orig_init(self, fn, arg_names, configs, key, *args, **kwargs)
+    Autotuner.__init__ = _patched_init
+    Autotuner._fms_patched = True
+
+
 def _strip_compiled_prefix(sd):
     prefix = "_orig_mod."
     return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in sd.items()}
@@ -95,6 +113,7 @@ class FMSLMWrapper(HFLM):
             model = LLaMA(config_data)
 
         elif arch == "gdn":
+            _patch_triton_autotuner_compat()
             from fla.models.gated_deltanet import (
                 GatedDeltaNetForCausalLM,
                 GatedDeltaNetConfig as FLAGDNConfig,
