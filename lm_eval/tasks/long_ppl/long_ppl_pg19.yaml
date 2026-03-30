@@ -1,8 +1,9 @@
 task: long_ppl_pg19
-dataset_path: /gpfs/hshen/dataset/pg19
+dataset_path: json
 dataset_name: null
 dataset_kwargs:
-  verification_mode: no_checks
+  data_files:
+    validation: /gpfs/hshen/dataset/pg19_validation.jsonl
 output_type: loglikelihood_rolling
 test_split: validation
 doc_to_text: ""
