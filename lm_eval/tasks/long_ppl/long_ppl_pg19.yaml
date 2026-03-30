@@ -1,5 +1,5 @@
 task: long_ppl_pg19
-dataset_path: deepmind/pg19
+dataset_path: /gpfs/hshen/dataset/pg19
 dataset_name: null
 output_type: loglikelihood_rolling
 test_split: validation
