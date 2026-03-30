@@ -1,0 +1,13 @@
+task: long_ppl_qmsum
+dataset_path: tau/scrolls
+dataset_name: qmsum
+output_type: loglikelihood_rolling
+test_split: validation
+doc_to_text: ""
+doc_to_target: "input"
+metric_list:
+  - metric: word_perplexity
+    aggregation: weighted_perplexity
+    higher_is_better: false
+metadata:
+  version: 1.0

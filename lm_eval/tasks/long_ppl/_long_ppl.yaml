@@ -1,0 +1,6 @@
+group: long_ppl
+task:
+  - long_ppl_govreport
+  - long_ppl_qmsum
+  - long_ppl_qasper
+  - long_ppl_pg19

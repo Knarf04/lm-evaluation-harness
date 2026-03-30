@@ -1,0 +1,13 @@
+task: long_ppl_pg19
+dataset_path: deepmind/pg19
+dataset_name: null
+output_type: loglikelihood_rolling
+test_split: validation
+doc_to_text: ""
+doc_to_target: "text"
+metric_list:
+  - metric: word_perplexity
+    aggregation: weighted_perplexity
+    higher_is_better: false
+metadata:
+  version: 1.0
